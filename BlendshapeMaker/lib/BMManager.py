@@ -4,12 +4,13 @@
 import imp
 import sys
 import time
+import os
 from os import path
 import Tkinter as tk
 import numpy as np
 from numpy import linalg as LA
 from math import sqrt, acos, cos, sin
-import scipy
+from scipy import optimize
 import scipy.sparse as sp
 from scipy.sparse.linalg import spsolve
 import concurrent.futures
@@ -18,15 +19,6 @@ import copy
 
 
 APP_ROOT = path.dirname( path.abspath( __file__ ) )
-
-
-
-FACIAL_LANDMARKS = [3749, 3745, 3731, 3725, 3704, 1572, 1592, 1598, 1612, 1617, 3662, 
-                    2207, 3093, 966, 2650, 2773, 2693, 671, 558, 2345, 2336, 2369, 
-                    4266, 2237, 2298, 2096, 1981, 1980, 1978, 237, 181, 2838, 4307, 
-                    4304, 4301, 4298, 4295, 732, 913, 921, 1034, 3024, 3016, 2865, 
-                    2728, 2188,  629, 733, 1011, 3115, 3124]
-
 
 
 class MyMesh():
@@ -191,8 +183,9 @@ class Mesh_VFN():
 
 
 class dtf():
-    def __init__(self, corrList, AVATAR_LANDMARKS, SourceExpression, SourceNeutral, AvatarNeutral, PartsSize, PartsRot, Ed_A, Ed_ATA, Es_ATA, Es_ATc, Ei_ATA, Ei_ATc, backlandmark_list):
+    def __init__(self, corrList, SOURCE_LANDMARKS, AVATAR_LANDMARKS, SourceExpression, SourceNeutral, AvatarNeutral, PartsSize, PartsRot, Ed_A, Ed_ATA, Es_ATA, Es_ATc, Ei_ATA, Ei_ATc, backlandmark_list):
         self.corrList = corrList
+        self.SOURCE_LANDMARKS = SOURCE_LANDMARKS
         self.AVATAR_LANDMARKS = AVATAR_LANDMARKS
         self.SE_Vertices = SourceExpression.Vertices
         self.SN_Vertices = SourceNeutral.Vertices
@@ -211,7 +204,8 @@ class dtf():
         self.Ei_ATA = Ei_ATA
         self.Ei_ATc = Ei_ATc
         self.backlandmark_list = backlandmark_list
-    
+
+
     def deformation_transfer(self):
         start_dtf = time.time()
         SourceRotation = np.zeros((len(self.SE_Faces), 3, 3), dtype = np.float32)
@@ -249,17 +243,17 @@ class dtf():
 
         #Landmark imitation term
         def MakeEl_ATA_ATc():
-            El_cVector = sp.lil_matrix((1, len(FACIAL_LANDMARKS)*3), dtype=np.float32)
-            El_A = sp.lil_matrix((len(FACIAL_LANDMARKS)*3, len(self.AN_Vertices)*3 + len(self.AN_Faces)*3), dtype=np.float32)
+            El_cVector = sp.lil_matrix((1, len(self.SOURCE_LANDMARKS)*3), dtype=np.float32)
+            El_A = sp.lil_matrix((len(self.SOURCE_LANDMARKS)*3, len(self.AN_Vertices)*3 + len(self.AN_Faces)*3), dtype=np.float32)
 
-            for i in range(len(FACIAL_LANDMARKS)):
+            for i in range(len(self.SOURCE_LANDMARKS)):
                 idx = self.AVATAR_LANDMARKS[i]
                 El_A[i*3, idx*3] = 1
                 El_A[i*3+1, idx*3+1] = 1
                 El_A[i*3+2, idx*3+2] = 1
 
-            for i in range(len(FACIAL_LANDMARKS)):
-                vector_s = self.SE_Vertices[FACIAL_LANDMARKS[i],0:3] - self.SN_Vertices[FACIAL_LANDMARKS[i],0:3]
+            for i in range(len(self.SOURCE_LANDMARKS)):
+                vector_s = self.SE_Vertices[self.SOURCE_LANDMARKS[i],0:3] - self.SN_Vertices[self.SOURCE_LANDMARKS[i],0:3]
                 if(0 <= i <= 4):
                     El_cVector[0, i*3:i*3+3] = np.dot(self.PartsRot[0], vector_s)*self.PartsSize[0] + self.AN_Vertices[self.AVATAR_LANDMARKS[i],0:3]
                 elif(5 <= i <= 9):
@@ -345,10 +339,28 @@ class BMMng():
         self.Avatar = []
         self.Correspondences = []
         self.AVATAR_LANDMARKS = []
+        self.AVATAR_BACKWARD_LANDMARKS = []
+        self.SOURCE_LANDMARKS = self.LoadLandmarks("data/landmarks/SOURCE/FACIAL_LANDMARKS.txt")
+        self.SOURCE_BACKWARD_LANDMARKS = self.LoadLandmarks("data/landmarks/SOURCE/BACKWARD_LANDMARKS.txt")
+        self.config = self.LoadConfig("config.txt")
         self.BS_forPartsSize = []
         d = path.split(self.avatarpath) #split path in (head, tail) 
         d = d[1].split(".")
         self.avatarname = d[0]
+
+    def LoadConfig(self, filepath):
+        config = [False]
+        if os.path.exists(filepath):
+            with open(filepath, "r") as f:
+                lines = f.readlines()
+                for line in lines:
+                    words = line.split()
+                    if words[0] == "SELECT_BACKWARD_LANDMARKS_MANUALLY":
+                        if words[1] == "True":
+                            config[0] = True
+        return config
+        
+
 
 
     def LoadBS(self):
@@ -377,32 +389,29 @@ class BMMng():
 
 
 
-    def LoadLandmarks(self):
-        
-        filename = "landmarks_%s.txt" %(self.avatarname)
+    def LoadLandmarks(self, filepath):
+        if path.exists(filepath):
+            print "\nLoading ", filepath
 
-        if(path.exists("data/landmarks/"+filename)):
-            print "\nLoading ", filename
-
-            f = open("data/landmarks/"+filename, 'rb')
-            line = f.readline()
-            words = line.split()
-            landmarks = []
-            for i in words:
-                landmarks += [int(i)]
-            print landmarks
-            f.close()
+            with open(filepath, 'r') as f:
+                line = f.readline()
+                words = line.split()
+                landmarks = [int(i) for i in words]
+                print landmarks
             return landmarks
         else:
+            print("Landmark file does not exists: {}".format(filepath))
             return []
 
 
-    def SaveLandmarks(self, landmarks):
-        filename = "landmarks_%s.txt" %(self.avatarname)
-        f = open("data/landmarks/"+filename, 'wb')
-        for i in landmarks:
-            f.write("%d " %(i))
-        f.close()
+    def SaveLandmarks(self, filepath, landmarks):
+        dirpath = path.dirname(filepath)
+        if not path.exists(dirpath):
+            os.makedirs(dirpath)
+            
+        with open(filepath, 'w') as f:
+            for i in landmarks:
+                f.write("%d " %(i))
 
 
     def SaveMesh(self, dest, filename, Vertices, Faces, Textures, TexName, Flags):
@@ -513,28 +522,42 @@ class BMMng():
         '''''''''select landmarks in tkinter'''''''''
 
         V = imp.load_source('show3d', APP_ROOT+'/show3d.py')
-        def select_landmarks(landmarks):
+        def select_landmarks(reference_landmarks, previous_landmarks):
             root = tk.Tk()
             root.title(u"Select Landmarks")
             root.resizable(0, 0)
             Avatar = Mesh_VFN(self.Avatar[0].Vertices, self.Avatar[0].Faces)
             Source = Mesh_VFN(self.BlendShapes[0].Vertices, self.BlendShapes[0].Faces)
-            Visualize = V.SelectLandmarks(root, Avatar, Source, landmarks)
+            Visualize = V.SelectLandmarks(root, Avatar, Source, reference_landmarks, previous_landmarks)
             Visualize.mainloop()
             if (min(Visualize.AVATAR_LANDMARKS) == None):
                 print "\nplease select more landmarks"
-                select_landmarks(Visualize.AVATAR_LANDMARKS)
+                select_landmarks(reference_landmarks, Visualize.AVATAR_LANDMARKS)
 
             return Visualize.AVATAR_LANDMARKS
+        
+        filepath = "data/landmarks/landmarks_%s.txt" %(self.avatarname)
+        previous_landmarks = self.LoadLandmarks(filepath)
 
-        previous_landmarks = self.LoadLandmarks()
-        self.AVATAR_LANDMARKS = select_landmarks(previous_landmarks)
-        self.SaveLandmarks(self.AVATAR_LANDMARKS)
+        if self.config[0]: # If you select backward landmarks manually
+            print("Use facial + backward landmarks")
+            reference_landmarks = self.SOURCE_LANDMARKS + self.SOURCE_BACKWARD_LANDMARKS
+        else:
+            print("Use only facial landmarks")
+            reference_landmarks = self.SOURCE_LANDMARKS
+        self.AVATAR_LANDMARKS = select_landmarks(reference_landmarks, previous_landmarks)
+        self.SaveLandmarks(filepath, self.AVATAR_LANDMARKS)
+
+        if self.config[0]:
+            self.AVATAR_BACKWARD_LANDMARKS = list(np.array(self.AVATAR_LANDMARKS)[len(self.SOURCE_LANDMARKS):])
+            self.AVATAR_LANDMARKS = list(np.array(self.AVATAR_LANDMARKS)[:len(self.SOURCE_LANDMARKS)])
+
+
         ''''''''''''''''''''''''''''''''''''''''''''''''
         #bind nosetop
-        xc=Vertices[self.AVATAR_LANDMARKS[13], 0] - self.BlendShapes[0].Vertices[FACIAL_LANDMARKS[13]][0]
-        yc=Vertices[self.AVATAR_LANDMARKS[13], 1] - self.BlendShapes[0].Vertices[FACIAL_LANDMARKS[13]][1]
-        zc=Vertices[self.AVATAR_LANDMARKS[13], 2] - self.BlendShapes[0].Vertices[FACIAL_LANDMARKS[13]][2]
+        xc=Vertices[self.AVATAR_LANDMARKS[13], 0] - self.BlendShapes[0].Vertices[self.SOURCE_LANDMARKS[13]][0]
+        yc=Vertices[self.AVATAR_LANDMARKS[13], 1] - self.BlendShapes[0].Vertices[self.SOURCE_LANDMARKS[13]][1]
+        zc=Vertices[self.AVATAR_LANDMARKS[13], 2] - self.BlendShapes[0].Vertices[self.SOURCE_LANDMARKS[13]][2]
         k=0
         for v in Vertices:
             v[0] = v[0]-xc
@@ -556,6 +579,9 @@ class BMMng():
         SourceV4 = np.zeros((len(SourceFaces), 3), dtype = np.float32)
         unusedpoints = []
 
+        for i in self.SOURCE_BACKWARD_LANDMARKS:
+            norm = LA.norm(SourceVertices[i,0:3] - AvatarVertices[:,0:3], axis=1)
+            self.AVATAR_BACKWARD_LANDMARKS += [np.argmin(norm)]
 
         Vinv = np.zeros((len(AvatarFaces), 3, 3), dtype = np.float32)  # V inverse of the Avatar triangle
         self.Adjacent = [[] for row in range(len(AvatarFaces))]         #indices of self.adjacent triangles
@@ -860,14 +886,17 @@ class BMMng():
                     unusedpoints += [i]
             for i in xrange(len(unusedpoints)):
                 (Econs_A, Econs_cVector) = AddConstraints(unusedpoints[i], [0, 0, 0])
-
-            #find closest point of back landmarks
-            for i in [437, 2526, 3344, 1274, 2212, 2204, 3585, 1468]:
-                norm = LA.norm(SourceVertices[i,0:3] - AvatarVertices[:,0:3], axis=1)
-                (Econs_A, Econs_cVector) = AddConstraints(np.argmin(norm), SourceVertices[i,0:3])
             #Facial landmark constraints
             for i in xrange(len(self.AVATAR_LANDMARKS)):
-                (Econs_A, Econs_cVector) = AddConstraints(self.AVATAR_LANDMARKS[i], SourceVertices[FACIAL_LANDMARKS[i],0:3])
+                (Econs_A, Econs_cVector) = AddConstraints(self.AVATAR_LANDMARKS[i], SourceVertices[self.SOURCE_LANDMARKS[i],0:3])
+            #Backward landmark constraints
+            if self.config[0]:
+                for i in xrange(len(self.AVATAR_BACKWARD_LANDMARKS)):
+                    (Econs_A, Econs_cVector) = AddConstraints(self.AVATAR_BACKWARD_LANDMARKS[i], SourceVertices[self.SOURCE_LANDMARKS[i],0:3])
+            else:
+                for i in self.SOURCE_BACKWARD_LANDMARKS:
+                    norm = LA.norm(SourceVertices[i,0:3] - AvatarVertices[:,0:3], axis=1)
+                    (Econs_A, Econs_cVector) = AddConstraints(np.argmin(norm), SourceVertices[i,0:3])
 
             #prevent collapse
             #(Ei_A, Ei_cVector) = Ei_AddConstraints(499, AvatarVertices[499, 0:3])
@@ -1088,11 +1117,15 @@ class BMMng():
                 corr += [[i, validindex]]
                 num_corrS_triangles[validindex] += 1
 
-        #test  bind non-facial area
+        #Bind non-facial area
         self.backlandmark_list = []
-        for i in [437, 2526, 3344, 1274, 2212, 2204, 3585, 1468]:
-            norm = LA.norm(SourceVertices[i,0:3] - AvatarVertices[:,0:3], axis=1)
-            self.backlandmark_list += [[i, np.argmin(norm)]]
+        if self.config[0]:
+            for s, a in zip(self.SOURCE_BACKWARD_LANDMARKS, self.AVATAR_BACKWARD_LANDMARKS):
+                self.backlandmark_list += [[s, a]]
+        else:
+            for i in self.SOURCE_BACKWARD_LANDMARKS:
+                norm = LA.norm(SourceVertices[i,0:3] - AvatarVertices[:,0:3], axis=1)
+                self.backlandmark_list += [[i, np.argmin(norm)]]
 
         print "done (%f sec)" %(time.time() - start_time)
 
@@ -1288,10 +1321,11 @@ class BMMng():
 
         ''''''''''''''''''''''''''''''''''''''''''''''''
         #save correspondences as corr_(avatarname).txt
-        f = open('data/correspondences/corr_%s.txt' %(self.avatarname), 'wb')
-        for c in self.Correspondences:
-            f.write("%d %d\n" %(c[0], c[1]))
-        f.close()
+        if not path.exists("data/correspondences/"):
+            os.makedirs("data/correspondences/")
+        with open('data/correspondences/corr_%s.txt' %(self.avatarname), 'w') as f:
+            for c in self.Correspondences:
+                f.write("%d %d\n" %(c[0], c[1]))
 
         self.SaveMesh("Results/", "Splitted.ply", self.Avatar[0].Vertices, self.Avatar[0].Faces, self.Avatar[0].Textures, self.Avatar[0].TexName, self.Avatar[0].Flags)
 
@@ -1316,7 +1350,7 @@ class BMMng():
             E = []
             for i in xrange(len(cared_landmarks)):
                 for j in xrange(i,len(cared_landmarks)):
-                    E += [np.dot(normal, SN_Vertices[FACIAL_LANDMARKS[cared_landmarks[j]],0:3]-SN_Vertices[FACIAL_LANDMARKS[cared_landmarks[i]],0:3])]
+                    E += [np.dot(normal, SN_Vertices[self.SOURCE_LANDMARKS[cared_landmarks[j]],0:3]-SN_Vertices[self.SOURCE_LANDMARKS[cared_landmarks[i]],0:3])]
             return E
         def AN_Energy(args):
             RotX = np.array([[1, 0, 0], [0, np.cos(args[0]), -np.sin(args[0])], [0, np.sin(args[0]), np.cos(args[0])]], dtype=np.float32)
@@ -1414,11 +1448,13 @@ class BMMng():
                                 [25, 26, 27, 28, 29, 30],   #left eye
                                 [33, 34, 35, 39, 40, 41, 44, 45, 46, 48, 49, 50]]   #mouth
         
+
+        # this part should be modified. the acculacy is not so good.
         for ls in cared_landmarks_list:
             cared_landmarks = ls
-            angles = scipy.optimize.least_squares(SN_Energy, initial, bounds=([-np.pi/2, -np.pi/2],[np.pi/2, np.pi/2])).x
+            angles = optimize.least_squares(SN_Energy, initial, bounds=([-np.pi/2, -np.pi/2],[np.pi/2, np.pi/2])).x
             PartsAngles_S = np.vstack((PartsAngles_S, [[angles[0], angles[1]]]))
-            angles = scipy.optimize.least_squares(AN_Energy, initial, bounds=([-np.pi/2, -np.pi/2],[np.pi/2, np.pi/2])).x
+            angles = optimize.least_squares(AN_Energy, initial, bounds=([-np.pi/2, -np.pi/2],[np.pi/2, np.pi/2])).x
             PartsAngles_A = np.vstack((PartsAngles_A, [[angles[0], angles[1]]]))
         '''
         for ls in cared_landmarks_list:
@@ -1447,23 +1483,23 @@ class BMMng():
 
         #measure facial parts size
         def Measure_Source_Parts_Size(lower, upper, partsnum):
-            xs=np.dot(PartsRot_S[partsnum], SN_Vertices[FACIAL_LANDMARKS[lower],0:3])[0]; xl=xs
-            ys=np.dot(PartsRot_S[partsnum], SN_Vertices[FACIAL_LANDMARKS[lower],0:3])[1]; yl=ys
-            zs=np.dot(PartsRot_S[partsnum], SN_Vertices[FACIAL_LANDMARKS[lower],0:3])[2]; zl=zs
+            xs=np.dot(PartsRot_S[partsnum], SN_Vertices[self.SOURCE_LANDMARKS[lower],0:3])[0]; xl=xs
+            ys=np.dot(PartsRot_S[partsnum], SN_Vertices[self.SOURCE_LANDMARKS[lower],0:3])[1]; yl=ys
+            zs=np.dot(PartsRot_S[partsnum], SN_Vertices[self.SOURCE_LANDMARKS[lower],0:3])[2]; zl=zs
 
             for i in xrange(lower, upper+1):
-                if(np.dot(PartsRot_S[partsnum], SN_Vertices[FACIAL_LANDMARKS[i],0:3])[0]<xs):
-                    xs=np.dot(PartsRot_S[partsnum], SN_Vertices[FACIAL_LANDMARKS[i],0:3])[0]
-                elif(xl<np.dot(PartsRot_S[partsnum], SN_Vertices[FACIAL_LANDMARKS[i],0:3])[0]):
-                    xl=np.dot(PartsRot_S[partsnum], SN_Vertices[FACIAL_LANDMARKS[i],0:3])[0]
-                if(np.dot(PartsRot_S[partsnum], SN_Vertices[FACIAL_LANDMARKS[i],0:3])[1]<ys):
-                    ys=np.dot(PartsRot_S[partsnum], SN_Vertices[FACIAL_LANDMARKS[i],0:3])[1]
-                elif(yl<np.dot(PartsRot_S[partsnum], SN_Vertices[FACIAL_LANDMARKS[i],0:3])[1]):
-                    yl=np.dot(PartsRot_S[partsnum], SN_Vertices[FACIAL_LANDMARKS[i],0:3])[1]
-                if(np.dot(PartsRot_S[partsnum], SN_Vertices[FACIAL_LANDMARKS[i],0:3])[2]<zs):
-                    zs=np.dot(PartsRot_S[partsnum], SN_Vertices[FACIAL_LANDMARKS[i],0:3])[2]
-                elif(zl<np.dot(PartsRot_S[partsnum], SN_Vertices[FACIAL_LANDMARKS[i],0:3])[2]):
-                    zl=np.dot(PartsRot_S[partsnum], SN_Vertices[FACIAL_LANDMARKS[i],0:3])[2]
+                if(np.dot(PartsRot_S[partsnum], SN_Vertices[self.SOURCE_LANDMARKS[i],0:3])[0]<xs):
+                    xs=np.dot(PartsRot_S[partsnum], SN_Vertices[self.SOURCE_LANDMARKS[i],0:3])[0]
+                elif(xl<np.dot(PartsRot_S[partsnum], SN_Vertices[self.SOURCE_LANDMARKS[i],0:3])[0]):
+                    xl=np.dot(PartsRot_S[partsnum], SN_Vertices[self.SOURCE_LANDMARKS[i],0:3])[0]
+                if(np.dot(PartsRot_S[partsnum], SN_Vertices[self.SOURCE_LANDMARKS[i],0:3])[1]<ys):
+                    ys=np.dot(PartsRot_S[partsnum], SN_Vertices[self.SOURCE_LANDMARKS[i],0:3])[1]
+                elif(yl<np.dot(PartsRot_S[partsnum], SN_Vertices[self.SOURCE_LANDMARKS[i],0:3])[1]):
+                    yl=np.dot(PartsRot_S[partsnum], SN_Vertices[self.SOURCE_LANDMARKS[i],0:3])[1]
+                if(np.dot(PartsRot_S[partsnum], SN_Vertices[self.SOURCE_LANDMARKS[i],0:3])[2]<zs):
+                    zs=np.dot(PartsRot_S[partsnum], SN_Vertices[self.SOURCE_LANDMARKS[i],0:3])[2]
+                elif(zl<np.dot(PartsRot_S[partsnum], SN_Vertices[self.SOURCE_LANDMARKS[i],0:3])[2]):
+                    zl=np.dot(PartsRot_S[partsnum], SN_Vertices[self.SOURCE_LANDMARKS[i],0:3])[2]
             size_x = xl-xs
             size_y = yl-ys
             size_z = zl-zs
@@ -1480,9 +1516,9 @@ class BMMng():
         (x, y, z) = Measure_Source_Parts_Size(25, 30, 4)
         S_PartsSize = np.vstack((S_PartsSize, [[x, y, z]])) ;print "Left eye: x: %f, y: %f, z: %f" %(x, y, z)
         (x, y, z) = Measure_Source_Parts_Size(31, 50, 5)
-        y1 = LA.norm(SN_Vertices[FACIAL_LANDMARKS[15],0:3]-SN_Vertices[FACIAL_LANDMARKS[44],0:3])
-        y2 = LA.norm(SN_Vertices[FACIAL_LANDMARKS[16],0:3]-SN_Vertices[FACIAL_LANDMARKS[45],0:3])
-        y3 = LA.norm(SN_Vertices[FACIAL_LANDMARKS[17],0:3]-SN_Vertices[FACIAL_LANDMARKS[46],0:3])
+        y1 = LA.norm(SN_Vertices[self.SOURCE_LANDMARKS[15],0:3]-SN_Vertices[self.SOURCE_LANDMARKS[44],0:3])
+        y2 = LA.norm(SN_Vertices[self.SOURCE_LANDMARKS[16],0:3]-SN_Vertices[self.SOURCE_LANDMARKS[45],0:3])
+        y3 = LA.norm(SN_Vertices[self.SOURCE_LANDMARKS[17],0:3]-SN_Vertices[self.SOURCE_LANDMARKS[46],0:3])
         y = (y1+y2+y3)/3 
         S_PartsSize = np.vstack((S_PartsSize, [[x, y, z]])) ;print "Mouth: x: %f, y: %f, z: %f" %(x, y, z)
 
@@ -1675,7 +1711,7 @@ class BMMng():
         print "Unused points :", unusedpoints
 
         i = 0
-        currMesh = dtf(self.Correspondences, self.AVATAR_LANDMARKS, self.BlendShapes[0], self.BlendShapes[0], self.Avatar[0], PartsSize, PartsRot, Ed_A, Ed_ATA, self.Es_ATA, self.Es_ATc, self.Ei_ATA, self.Ei_ATc, self.backlandmark_list)
+        currMesh = dtf(self.Correspondences, self.SOURCE_LANDMARKS, self.AVATAR_LANDMARKS, self.BlendShapes[0], self.BlendShapes[0], self.Avatar[0], PartsSize, PartsRot, Ed_A, Ed_ATA, self.Es_ATA, self.Es_ATc, self.Ei_ATA, self.Ei_ATc, self.backlandmark_list)
         print "\n\nGenerating Neutral AvatarMesh"
         currMesh.deformation_transfer()
         self.SaveMesh("Results/", "AvatarMesh_Neutral.ply", currMesh.Vertices, self.Avatar[0].Faces, self.Avatar[0].Textures, self.Avatar[0].TexName, self.Avatar[0].Flags)
@@ -1685,7 +1721,7 @@ class BMMng():
             or meshnum == 27 or meshnum == 34 or meshnum == 35 or meshnum == 42):
                 continue
             else:
-                currMesh = dtf(self.Correspondences, self.AVATAR_LANDMARKS, self.BlendShapes[i+1], self.BlendShapes[0], self.Avatar[0], PartsSize, PartsRot, Ed_A, Ed_ATA, self.Es_ATA, self.Es_ATc, self.Ei_ATA, self.Ei_ATc, self.backlandmark_list)
+                currMesh = dtf(self.Correspondences, self.SOURCE_LANDMARKS, self.AVATAR_LANDMARKS, self.BlendShapes[i+1], self.BlendShapes[0], self.Avatar[0], PartsSize, PartsRot, Ed_A, Ed_ATA, self.Es_ATA, self.Es_ATc, self.Ei_ATA, self.Ei_ATc, self.backlandmark_list)
             print "\n\nGenerating Avatar blendshape ", meshnum
             currMesh.deformation_transfer()
             self.Avatar.append(currMesh)
