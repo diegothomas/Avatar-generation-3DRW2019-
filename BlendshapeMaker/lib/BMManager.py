@@ -1478,8 +1478,8 @@ class BMMng():
             RotY = np.array([[np.cos(angle_y), 0, np.sin(angle_y)], [0, 1, 0], [-np.sin(angle_y), 0, np.cos(angle_y)]], dtype=np.float32)
             Rot_A = np.dot(RotY, RotX)
             PartsRot[i] = np.dot(Rot_A, Rot_S.T)
-            PartsRot_S[i] = Rot_S
-            PartsRot_A[i] = Rot_A
+            PartsRot_S[i] = Rot_S.T
+            PartsRot_A[i] = Rot_A.T
 
         #measure facial parts size
         def Measure_Source_Parts_Size(lower, upper, partsnum):
